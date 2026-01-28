@@ -22,9 +22,23 @@ from telegram.ext import (
 )
 
 # ---------------- 설정 ----------------
-TELEGRAM_TOKEN = "7900531497:AAExv4wk9hd_q5fVOhFZkMC5I4sDqmvqc1M"
+TELEGRAM_TOKEN = "7900531497:AAGHUYjnIAG7ib5cKgf0uKoCE10EFrwNVAI"
 ALLOWED_CHAT_ID = 1715917739
 DATA_FILE = "bikes.json"
+
+# 한글 브랜드 → 영어 브랜드 매핑 (라이트바겐 사이트 기준)
+BRAND_MAP = {
+    "혼다": "Honda",
+    "야마하": "Yamaha",
+    "스즈키": "Suzuki",
+    "가와사키": "Kawasaki",
+    "가와사키": "Kawasaki",  # 오타 방지
+    "bmw": "BMW",
+    "BMW": "BMW",
+    "두카티": "Ducati",
+    "ducati": "Ducati",
+    # 필요하면 더 추가하세요 (대소문자 구분 없이 동작)
+}
 
 logging.basicConfig(
     level=logging.INFO,
@@ -54,35 +68,44 @@ def save_bikes(data):
     with open(DATA_FILE, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-def scrape_bike_data(brand, model, min_year, max_year):
+def scrape_bike_data(brand_kr, model, min_year, max_year):
     driver = get_driver()
     try:
-        query = f"{brand} {model}"
-        url = f"https://www.reitwagen.co.kr/products/home/used?query={query.replace(' ', '%20')}"
-        driver.get(url)
-        time.sleep(random.uniform(5, 8))  # 로딩 대기
+        # 한글 브랜드 → 영어 변환
+        brand = BRAND_MAP.get(brand_kr.lower(), brand_kr)  # 매핑 없으면 그대로 사용 (영어 입력 시)
 
-        # 가격 요소 찾기 - 실제 사이트에서 F12 눌러서 클래스명 확인 후 수정하세요
-        # 지금은 임시 셀렉터들 (사이트 구조 바뀌면 안 될 수 있음)
+        # 정확한 필터 URL (brands[0]=브랜드 & models[0]=모델)
+        url = (
+            f"https://www.reitwagen.co.kr/products/home/used?"
+            f"brands%5B0%5D={brand}&"
+            f"models%5B0%5D={model.replace(' ', '%20')}"
+        )
+
+        driver.get(url)
+        time.sleep(random.uniform(5, 8))  # 페이지 로딩 + Cloudflare 대기
+
+        # 가격 요소 찾기 - 사이트 구조에 따라 셀렉터 조정 필요
+        # F12 눌러서 가격 부분 클래스 확인 후 수정하세요 (현재 임시)
         price_elements = driver.find_elements(
             By.CSS_SELECTOR,
-            'div[class*="price"], span[class*="price"], strong, .price, [class*="amount"], [class*="won"], .cost'
+            'div[class*="price"], span[class*="price"], strong.price, .price-amount, [class*="won"], .cost, .amount'
         )
 
         prices = []
         for elem in price_elements:
             text = elem.text.strip()
-            if '만원' in text or '₩' in text or '원' in text:
+            if any(keyword in text for keyword in ['만원', '₩', '원']):
                 cleaned = text.replace('만원', '').replace(',', '').replace(' ', '').replace('~', '').replace('₩', '').replace('원', '')
                 try:
                     p = int(cleaned)
-                    if 100 <= p <= 10000:
+                    if 100 <= p <= 10000:  # 현실적 범위
                         prices.append(p)
                 except ValueError:
                     pass
 
         count = len(prices)
         if count == 0:
+            logging.info(f"{brand} {model} 매물 0개")
             return None, None, None, 0
 
         avg = round(sum(prices) / count)
@@ -91,7 +114,7 @@ def scrape_bike_data(brand, model, min_year, max_year):
         return avg, min_p, max_p, count
 
     except Exception as e:
-        logging.error(f"스크래핑 실패 ({brand} {model}): {e}")
+        logging.error(f"스크래핑 실패 ({brand_kr} {model}): {e}")
         return None, None, None, 0
     finally:
         driver.quit()
@@ -104,19 +127,19 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
     message = f"[{datetime.now().strftime('%Y-%m-%d %H:%M KST')}] 오늘 라이트바겐 중고 바이크 시세\n\n"
 
     for key, info in bikes.items():
-        brand = info.get('brand', '')
+        brand_kr = info.get('brand_kr', info.get('brand', ''))  # 한글 브랜드 저장해두기
         model = info.get('model', '')
         years = info.get('years', [])
         if not years:
             continue
         min_y, max_y = min(years), max(years)
 
-        avg, min_p, max_p, count = scrape_bike_data(brand, model, min_y, max_y)
+        avg, min_p, max_p, count = scrape_bike_data(brand_kr, model, min_y, max_y)
 
         if avg is None:
-            message += f"{brand} {model} ({min_y}~{max_y}): 매물 없거나 오류 발생\n\n"
+            message += f"{brand_kr} {model} ({min_y}~{max_y}): 매물 없거나 오류 발생\n\n"
         else:
-            message += f"📌 {brand} {model} ({min_y}~{max_y})\n"
+            message += f"📌 {brand_kr} {model} ({min_y}~{max_y})\n"
             message += f"   • 평균: {avg:,}만원\n"
             message += f"   • 최저: {min_p:,}만원\n"
             message += f"   • 최고: {max_p:,}만원\n"
@@ -130,10 +153,10 @@ async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     args = context.args
     if len(args) < 3:
-        await update.message.reply_text("사용법: /add 브랜드 모델 년식시작-년식끝\n예: /add 혼다 PCX125 2021-2024")
+        await update.message.reply_text("사용법: /add 브랜드 모델 년식시작-년식끝\n예: /add 야마하 NMAX125 2018-2025")
         return
     try:
-        brand = args[0]
+        brand_kr = args[0]  # 한글 브랜드 그대로 저장 (표시용)
         model = args[1]
         year_str = args[2]
         miny, maxy = map(int, year_str.split('-'))
@@ -143,10 +166,17 @@ async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
         years = list(range(miny, maxy + 1))
 
         bikes = load_bikes()
-        key = f"{brand}_{model}".replace(' ', '_').lower()
-        bikes[key] = {"brand": brand, "model": model, "years": years}
+        # 키는 영어 브랜드로 생성 (중복 방지 + 크롤링용)
+        brand_eng = BRAND_MAP.get(brand_kr.lower(), brand_kr)
+        key = f"{brand_eng.lower()}_{model.lower().replace(' ', '_')}"
+        bikes[key] = {
+            "brand_kr": brand_kr,  # 표시용 한글 브랜드
+            "brand": brand_eng,    # 크롤링용 영어 브랜드
+            "model": model,
+            "years": years
+        }
         save_bikes(bikes)
-        await update.message.reply_text(f"추가 완료: {brand} {model} ({miny}-{maxy})")
+        await update.message.reply_text(f"추가 완료: {brand_kr} {model} ({miny}-{maxy})")
     except Exception as e:
         await update.message.reply_text(f"형식 오류! 예시처럼 입력해주세요 ({str(e)})")
 
@@ -154,16 +184,18 @@ async def remove(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != ALLOWED_CHAT_ID:
         return
     if not context.args:
-        await update.message.reply_text("/remove 키\n예: /remove 혼다_pcx125")
+        await update.message.reply_text("/remove 키\n예: /remove yamaha_nmax125\n/list로 키 확인하세요")
         return
     key = context.args[0]
     bikes = load_bikes()
     if key in bikes:
+        brand_kr = bikes[key].get('brand_kr', key)
+        model = bikes[key].get('model', '')
         del bikes[key]
         save_bikes(bikes)
-        await update.message.reply_text(f"{key} 삭제 완료")
+        await update.message.reply_text(f"{brand_kr} {model} 삭제 완료")
     else:
-        await update.message.reply_text("그런 기종 없음")
+        await update.message.reply_text("그런 기종 없음. /list로 키 확인하세요")
 
 async def list_bikes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != ALLOWED_CHAT_ID:
@@ -174,12 +206,14 @@ async def list_bikes(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     msg = "현재 등록 목록:\n"
     for key, v in bikes.items():
-        ys = v['years']
-        msg += f"- {key}: {v['brand']} {v['model']} ({min(ys)}~{max(ys)})\n"
+        brand_kr = v.get('brand_kr', v.get('brand', ''))
+        model = v.get('model', '')
+        ys = v.get('years', [])
+        msg += f"- {key}: {brand_kr} {model} ({min(ys)}~{max(ys)})\n"
     await update.message.reply_text(msg)
 
 def main():
-    print("봇 시작 중...")  # 로그에서 확인용
+    print("봇 시작 중...")
 
     application = Application.builder().token(TELEGRAM_TOKEN).build()
 
