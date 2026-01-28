@@ -1,22 +1,18 @@
-# requirements.txt 내용 (Render 업로드 시 이 파일도 만들어서 넣으세요)
-selenium
-webdriver-manager
-python-telegram-bot==20.7  # 최신 버전 추천
-schedule
-requests
-
-# main.py
 import json
 import os
 import time
 import random
 import logging
 from datetime import datetime, time as dt_time
+
+# Selenium 관련
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from webdriver_manager.chrome import ChromeDriverManager
+
+# Telegram 관련
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, JobQueue
 
