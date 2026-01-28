@@ -5,15 +5,16 @@ import random
 import logging
 from datetime import datetime, time as dt_time
 
+# Selenium import (여기서부터 핵심)
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from webdriver_manager.chrome import ChromeDriverManager
 
+# Telegram import
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, JobQueue
-
 # ---------------- 설정 ----------------
 TELEGRAM_TOKEN = "7900531497:AAGHUYjnIAG7ib5cKgf0uKoCE10EFrwNVAI"
 ALLOWED_CHAT_ID = 1715917739
