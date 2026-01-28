@@ -5,22 +5,31 @@ import random
 import logging
 from datetime import datetime, time as dt_time
 
-# Selenium import (여기서부터 핵심)
+# Selenium 관련
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from webdriver_manager.chrome import ChromeDriverManager
 
-# Telegram import
+# Telegram 관련 (v21+ 호환)
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes, JobQueue
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+    JobQueue,
+)
+
 # ---------------- 설정 ----------------
 TELEGRAM_TOKEN = "7900531497:AAGHUYjnIAG7ib5cKgf0uKoCE10EFrwNVAI"
 ALLOWED_CHAT_ID = 1715917739
 DATA_FILE = "bikes.json"
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 
 def get_driver():
     options = Options()
@@ -28,7 +37,10 @@ def get_driver():
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
-    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+    options.add_argument(
+        "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    )
     service = Service(ChromeDriverManager().install())
     return webdriver.Chrome(service=service, options=options)
 
@@ -43,19 +55,21 @@ def save_bikes(data):
     with open(DATA_FILE, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-# 크롤링 함수 (매물 페이지 기반 - 실제 클래스명 확인 필요)
+# 크롤링 함수 (실제 사이트 구조에 맞게 CSS 셀렉터 수정 필요)
 def scrape_bike_data(brand, model, min_year, max_year):
     driver = get_driver()
     try:
-        # 검색어로 필터링 (사이트 구조상 query 파라미터 사용)
         query = f"{brand} {model}"
         url = f"https://www.reitwagen.co.kr/products/home/used?query={query.replace(' ', '%20')}"
         driver.get(url)
-        time.sleep(random.uniform(5, 8))  # Cloudflare/로딩 대기
+        time.sleep(random.uniform(5, 8))
 
-        # 가격 요소 찾기 - 개발자도구(F12)로 실제 클래스 확인 후 수정!
-        # 예: div[class*="price"], span.price, strong.price 등
-        price_elements = driver.find_elements(By.CSS_SELECTOR, 'div[class*="price"], span[class*="price"], strong, .price, [class*="amount"]')
+        # 가격 요소 찾기 - 실제 사이트 F12로 확인 후 수정하세요!
+        # 예시 셀렉터들 (임시)
+        price_elements = driver.find_elements(
+            By.CSS_SELECTOR,
+            'div[class*="price"], span[class*="price"], strong, .price, [class*="amount"], [class*="won"]'
+        )
 
         prices = []
         for elem in price_elements:
@@ -64,7 +78,7 @@ def scrape_bike_data(brand, model, min_year, max_year):
                 cleaned = text.replace('만원', '').replace(',', '').replace(' ', '').replace('~', '').replace('₩', '')
                 try:
                     p = int(cleaned)
-                    if 100 <= p <= 10000:  # 현실적 범위 필터
+                    if 100 <= p <= 10000:
                         prices.append(p)
                 except ValueError:
                     pass
@@ -111,10 +125,10 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
             message += f"   • 최고: {max_p:,}만원\n"
             message += f"   • 매물: {count}대\n\n"
 
-    if len(message) > 100:  # 내용 있으면 보내기
+    if len(message) > 100:
         await context.bot.send_message(chat_id=ALLOWED_CHAT_ID, text=message)
 
-# 명령어
+# 명령어 핸들러
 async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != ALLOWED_CHAT_ID:
         return
@@ -137,11 +151,12 @@ async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
         bikes[key] = {"brand": brand, "model": model, "years": years}
         save_bikes(bikes)
         await update.message.reply_text(f"추가 완료: {brand} {model} ({miny}-{maxy})")
-    except:
-        await update.message.reply_text("형식 오류! 예시처럼 입력해주세요")
+    except Exception as e:
+        await update.message.reply_text(f"형식 오류! 예시처럼 입력해주세요 ({str(e)})")
 
 async def remove(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.id != ALLOWED_CHAT_ID: return
+    if update.effective_chat.id != ALLOWED_CHAT_ID:
+        return
     if not context.args:
         await update.message.reply_text("/remove 키\n예: /remove 혼다_pcx125")
         return
@@ -155,7 +170,8 @@ async def remove(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("그런 기종 없음")
 
 async def list_bikes(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.id != ALLOWED_CHAT_ID: return
+    if update.effective_chat.id != ALLOWED_CHAT_ID:
+        return
     bikes = load_bikes()
     if not bikes:
         await update.message.reply_text("등록된 기종 없음")
@@ -168,18 +184,29 @@ async def list_bikes(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # 메인
 def main():
+    print("봇 시작 중...")  # 로그 확인용
+
     app = Application.builder().token(TELEGRAM_TOKEN).build()
 
     app.add_handler(CommandHandler("add", add))
     app.add_handler(CommandHandler("remove", remove))
     app.add_handler(CommandHandler("list", list_bikes))
 
-    # 매일 한국 9시 (Render UTC 00:00 = KST 09:00, DST 고려 필요 시 조정)
     job_queue: JobQueue = app.job_queue
-    job_queue.run_daily(send_daily_report, time=dt_time(0, 0), days=tuple(range(7)))
+    job_queue.run_daily(
+        send_daily_report,
+        time=dt_time(0, 0),  # UTC 00:00 = 한국 09:00 (겨울 기준)
+        days=tuple(range(7))
+    )
 
-    print("봇 시작 중...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    # v21+ 호환 polling 옵션
+    app.run_polling(
+        allowed_updates=Update.ALL_TYPES,
+        drop_pending_updates=True,
+        poll_interval=0.5,
+        timeout=10,
+        bootstrap_retries=-1
+    )
 
 if __name__ == '__main__':
     main()
