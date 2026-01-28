@@ -1,5 +1,5 @@
 selenium
 webdriver-manager
-python-telegram-bot>=21.5
+python-telegram-bot[job-queue]==21.5
 schedule
 requests
