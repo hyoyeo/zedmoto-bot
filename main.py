@@ -22,7 +22,7 @@ from telegram.ext import (
 )
 
 # ---------------- 설정 ----------------
-TELEGRAM_TOKEN = "7900531497:AAGHUYjnIAG7ib5cKgf0uKoCE10EFrwNVAI"
+TELEGRAM_TOKEN = "7900531497:AAExv4wk9hd_q5fVOhFZkMC5I4sDqmvqc1M"
 ALLOWED_CHAT_ID = 1715917739
 DATA_FILE = "bikes.json"
 
