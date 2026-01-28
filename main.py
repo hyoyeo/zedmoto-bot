@@ -44,7 +44,6 @@ def get_driver():
     service = Service(ChromeDriverManager().install())
     return webdriver.Chrome(service=service, options=options)
 
-# JSON 관리
 def load_bikes():
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, 'r', encoding='utf-8') as f:
@@ -55,27 +54,26 @@ def save_bikes(data):
     with open(DATA_FILE, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-# 크롤링 함수 (실제 사이트 구조에 맞게 CSS 셀렉터 수정 필요)
 def scrape_bike_data(brand, model, min_year, max_year):
     driver = get_driver()
     try:
         query = f"{brand} {model}"
         url = f"https://www.reitwagen.co.kr/products/home/used?query={query.replace(' ', '%20')}"
         driver.get(url)
-        time.sleep(random.uniform(5, 8))
+        time.sleep(random.uniform(5, 8))  # 로딩 대기
 
-        # 가격 요소 찾기 - 실제 사이트 F12로 확인 후 수정하세요!
-        # 예시 셀렉터들 (임시)
+        # 가격 요소 찾기 - 실제 사이트에서 F12 눌러서 클래스명 확인 후 수정하세요
+        # 지금은 임시 셀렉터들 (사이트 구조 바뀌면 안 될 수 있음)
         price_elements = driver.find_elements(
             By.CSS_SELECTOR,
-            'div[class*="price"], span[class*="price"], strong, .price, [class*="amount"], [class*="won"]'
+            'div[class*="price"], span[class*="price"], strong, .price, [class*="amount"], [class*="won"], .cost'
         )
 
         prices = []
         for elem in price_elements:
             text = elem.text.strip()
-            if '만원' in text or '₩' in text:
-                cleaned = text.replace('만원', '').replace(',', '').replace(' ', '').replace('~', '').replace('₩', '')
+            if '만원' in text or '₩' in text or '원' in text:
+                cleaned = text.replace('만원', '').replace(',', '').replace(' ', '').replace('~', '').replace('₩', '').replace('원', '')
                 try:
                     p = int(cleaned)
                     if 100 <= p <= 10000:
@@ -98,7 +96,6 @@ def scrape_bike_data(brand, model, min_year, max_year):
     finally:
         driver.quit()
 
-# 매일 보고서
 async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
     bikes = load_bikes()
     if not bikes:
@@ -128,7 +125,6 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
     if len(message) > 100:
         await context.bot.send_message(chat_id=ALLOWED_CHAT_ID, text=message)
 
-# 명령어 핸들러
 async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != ALLOWED_CHAT_ID:
         return
@@ -182,30 +178,28 @@ async def list_bikes(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg += f"- {key}: {v['brand']} {v['model']} ({min(ys)}~{max(ys)})\n"
     await update.message.reply_text(msg)
 
-# 메인
 def main():
-    print("봇 시작 중...")  # 로그 확인용
+    print("봇 시작 중...")  # 로그에서 확인용
 
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
+    application = Application.builder().token(TELEGRAM_TOKEN).build()
 
-    app.add_handler(CommandHandler("add", add))
-    app.add_handler(CommandHandler("remove", remove))
-    app.add_handler(CommandHandler("list", list_bikes))
+    application.add_handler(CommandHandler("add", add))
+    application.add_handler(CommandHandler("remove", remove))
+    application.add_handler(CommandHandler("list", list_bikes))
 
-    job_queue: JobQueue = app.job_queue
+    job_queue = application.job_queue
     job_queue.run_daily(
         send_daily_report,
-        time=dt_time(0, 0),  # UTC 00:00 = 한국 09:00 (겨울 기준)
+        time=dt_time(0, 0),
         days=tuple(range(7))
     )
 
-    # v21+ 호환 polling 옵션
-    app.run_polling(
+    application.run_polling(
         allowed_updates=Update.ALL_TYPES,
         drop_pending_updates=True,
         poll_interval=0.5,
         timeout=10,
-        bootstrap_retries=-1
+        bootstrap_retries=0
     )
 
 if __name__ == '__main__':
