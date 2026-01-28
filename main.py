@@ -85,10 +85,9 @@ def scrape_bike_data(brand_kr, model, min_year, max_year):
         time.sleep(random.uniform(5, 8))  # 페이지 로딩 + Cloudflare 대기
 
         # 가격 요소 찾기 - 사이트 구조에 따라 셀렉터 조정 필요
-        # F12 눌러서 가격 부분 클래스 확인 후 수정하세요 (현재 임시)
         price_elements = driver.find_elements(
-            By.CSS_SELECTOR,
-            'div[class*="price"], span[class*="price"], strong.price, .price-amount, [class*="won"], .cost, .amount'
+        By.CSS_SELECTOR,
+        '[class*="font-bold"], [class*="text-2xl"], [class*="tracking"], strong, span.text-bold, div.text-bold'
         )
 
         prices = []
