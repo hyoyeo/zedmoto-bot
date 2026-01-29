@@ -21,23 +21,27 @@ from telegram.ext import (
     JobQueue,
 )
 
+# Render 포트 바인딩 더미 서버 (포트 스캔 경고 방지)
+import http.server
+import socketserver
+import threading
+
 # ---------------- 설정 ----------------
-TELEGRAM_TOKEN = "7900531497:AAExv4wk9hd_q5fVOhFZkMC5I4sDqmvqc1M"
+TELEGRAM_TOKEN = "7900531497:AAExv4wk9hd_q5fVOhFZkMC5I4sDqmvqc1M"  # 새 토큰 적용
 ALLOWED_CHAT_ID = 1715917739
 DATA_FILE = "bikes.json"
 
-# 한글 브랜드 → 영어 브랜드 매핑 (라이트바겐 사이트 기준)
+# 한글 브랜드 → 영어 브랜드 매핑
 BRAND_MAP = {
     "혼다": "Honda",
     "야마하": "Yamaha",
     "스즈키": "Suzuki",
     "가와사키": "Kawasaki",
-    "가와사키": "Kawasaki",  # 오타 방지
     "bmw": "BMW",
     "BMW": "BMW",
     "두카티": "Ducati",
     "ducati": "Ducati",
-    # 필요하면 더 추가하세요 (대소문자 구분 없이 동작)
+    # 추가 필요 시 넣기
 }
 
 logging.basicConfig(
@@ -71,23 +75,19 @@ def save_bikes(data):
 def scrape_bike_data(brand_kr, model, min_year, max_year):
     driver = get_driver()
     try:
-        # 한글 브랜드 → 영어 변환
-        brand = BRAND_MAP.get(brand_kr.lower(), brand_kr)  # 매핑 없으면 그대로 사용 (영어 입력 시)
-
-        # 정확한 필터 URL (brands[0]=브랜드 & models[0]=모델)
+        brand = BRAND_MAP.get(brand_kr.lower(), brand_kr)  # 한글 → 영어 변환
         url = (
             f"https://www.reitwagen.co.kr/products/home/used?"
             f"brands%5B0%5D={brand}&"
             f"models%5B0%5D={model.replace(' ', '%20')}"
         )
-
         driver.get(url)
-        time.sleep(random.uniform(5, 8))  # 페이지 로딩 + Cloudflare 대기
+        time.sleep(random.uniform(5, 8))
 
-        # 가격 요소 찾기 - 사이트 구조에 따라 셀렉터 조정 필요
+        # 가격 요소 셀렉터 (사이트 구조에 맞게 조정 - F12로 확인)
         price_elements = driver.find_elements(
-        By.CSS_SELECTOR,
-        '[class*="font-bold"], [class*="text-2xl"], [class*="tracking"], strong, span.text-bold, div.text-bold'
+            By.CSS_SELECTOR,
+            'span.font-bold.text-2xl, div.font-bold.text-2xl, .tracking-tight.font-bold, [class*="font-bold"], [class*="text-2xl"], strong.price, .price-amount, [class*="amount"], [class*="won"]'
         )
 
         prices = []
@@ -97,7 +97,7 @@ def scrape_bike_data(brand_kr, model, min_year, max_year):
                 cleaned = text.replace('만원', '').replace(',', '').replace(' ', '').replace('~', '').replace('₩', '').replace('원', '')
                 try:
                     p = int(cleaned)
-                    if 100 <= p <= 10000:  # 현실적 범위
+                    if 100 <= p <= 10000:
                         prices.append(p)
                 except ValueError:
                     pass
@@ -121,12 +121,13 @@ def scrape_bike_data(brand_kr, model, min_year, max_year):
 async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
     bikes = load_bikes()
     if not bikes:
+        await context.bot.send_message(chat_id=ALLOWED_CHAT_ID, text="등록된 기종 없음. /add로 추가하세요.")
         return
 
     message = f"[{datetime.now().strftime('%Y-%m-%d %H:%M KST')}] 오늘 라이트바겐 중고 바이크 시세\n\n"
 
     for key, info in bikes.items():
-        brand_kr = info.get('brand_kr', info.get('brand', ''))  # 한글 브랜드 저장해두기
+        brand_kr = info.get('brand_kr', info.get('brand', ''))
         model = info.get('model', '')
         years = info.get('years', [])
         if not years:
@@ -144,8 +145,13 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
             message += f"   • 최고: {max_p:,}만원\n"
             message += f"   • 매물: {count}대\n\n"
 
-    if len(message) > 100:
-        await context.bot.send_message(chat_id=ALLOWED_CHAT_ID, text=message)
+    await context.bot.send_message(chat_id=ALLOWED_CHAT_ID, text=message)
+
+async def check_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.id != ALLOWED_CHAT_ID:
+        return
+    await update.message.reply_text("지금 시세를 확인합니다... (잠시만 기다려주세요)")
+    await send_daily_report(context)  # 즉시 알림 보내기
 
 async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != ALLOWED_CHAT_ID:
@@ -155,7 +161,7 @@ async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("사용법: /add 브랜드 모델 년식시작-년식끝\n예: /add 야마하 NMAX125 2018-2025")
         return
     try:
-        brand_kr = args[0]  # 한글 브랜드 그대로 저장 (표시용)
+        brand_kr = args[0]
         model = args[1]
         year_str = args[2]
         miny, maxy = map(int, year_str.split('-'))
@@ -165,12 +171,11 @@ async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
         years = list(range(miny, maxy + 1))
 
         bikes = load_bikes()
-        # 키는 영어 브랜드로 생성 (중복 방지 + 크롤링용)
         brand_eng = BRAND_MAP.get(brand_kr.lower(), brand_kr)
         key = f"{brand_eng.lower()}_{model.lower().replace(' ', '_')}"
         bikes[key] = {
-            "brand_kr": brand_kr,  # 표시용 한글 브랜드
-            "brand": brand_eng,    # 크롤링용 영어 브랜드
+            "brand_kr": brand_kr,
+            "brand": brand_eng,
             "model": model,
             "years": years
         }
@@ -183,7 +188,7 @@ async def remove(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != ALLOWED_CHAT_ID:
         return
     if not context.args:
-        await update.message.reply_text("/remove 키\n예: /remove yamaha_nmax125\n/list로 키 확인하세요")
+        await update.message.reply_text("/remove 키\n/list로 키 확인하세요")
         return
     key = context.args[0]
     bikes = load_bikes()
@@ -201,7 +206,7 @@ async def list_bikes(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     bikes = load_bikes()
     if not bikes:
-        await update.message.reply_text("등록된 기종 없음")
+        await update.message.reply_text("등록된 기종 없음. /add로 추가하세요")
         return
     msg = "현재 등록 목록:\n"
     for key, v in bikes.items():
@@ -214,11 +219,22 @@ async def list_bikes(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     print("봇 시작 중...")
 
+    # Render 포트 바인딩 더미 서버 (포트 스캔 경고 방지)
+    def start_dummy_server():
+        PORT = int(os.environ.get("PORT", 10000))
+        Handler = http.server.SimpleHTTPRequestHandler
+        with socketserver.TCPServer(("", PORT), Handler) as httpd:
+            print(f"Dummy server running on port {PORT}")
+            httpd.serve_forever()
+
+    threading.Thread(target=start_dummy_server, daemon=True).start()
+
     application = Application.builder().token(TELEGRAM_TOKEN).build()
 
     application.add_handler(CommandHandler("add", add))
     application.add_handler(CommandHandler("remove", remove))
     application.add_handler(CommandHandler("list", list_bikes))
+    application.add_handler(CommandHandler("check", check_now))  # 수동 시세 확인
 
     job_queue = application.job_queue
     job_queue.run_daily(
